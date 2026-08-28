@@ -8,7 +8,6 @@ import requests
 import json
 import glob
 from datetime import datetime
-import plotly.graph_objects as go
 
 st.set_page_config(
     page_title="P2-GRAPHON-SYSTEMIC",
@@ -33,9 +32,6 @@ st.markdown("""
         margin: 0.5rem 0;
         border-left: 4px solid #667eea;
     }
-    .ticker-card-high { border-left-color: #27ae60; }
-    .ticker-card-medium { border-left-color: #f39c12; }
-    .ticker-card-low { border-left-color: #e74c3c; }
     .confidence-high { color: #27ae60; font-weight: 600; }
     .confidence-medium { color: #f39c12; font-weight: 600; }
     .confidence-low { color: #e74c3c; font-weight: 600; }
@@ -70,11 +66,24 @@ st.markdown("""
 
 def load_data():
     """Load latest results."""
+    # Try local first
     json_files = glob.glob("graphon_results_*.json")
     if json_files:
         latest = sorted(json_files)[-1]
         with open(latest, 'r') as f:
             return json.load(f)
+    
+    # Try HuggingFace
+    try:
+        repo_id = "P2SAMAPA/p2-etf-graphon-systemic-results"
+        today = datetime.now().strftime("%Y-%m-%d")
+        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/graphon_results_{today}.json"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+    except:
+        pass
+    
     return None
 
 
@@ -86,17 +95,24 @@ def main():
     
     if not data:
         st.error("No data available. Run `python trainer.py` first.")
+        st.info("Check that the file exists: graphon_results_*.json")
         return
     
     run_date = data.get('run_date', 'Unknown')
     st.caption(f"Results from: {run_date}")
     
-    tab1, tab2 = st.tabs(["📊 Top Picks", "🌐 Network Phase"])
-    
+    # Check if data has the required keys
     top_picks = data.get('top_picks', {})
     phase_transitions = data.get('phase_transitions', {})
     best_windows = data.get('best_windows', {})
     graphon_metrics = data.get('graphon_metrics', {})
+    
+    if not top_picks:
+        st.warning("No top picks found in the data")
+        st.json(data)  # Show raw data for debugging
+        return
+    
+    tab1, tab2 = st.tabs(["📊 Top Picks", "🌐 Network Phase"])
     
     with tab1:
         st.subheader("Top ETF Picks by Universe")
@@ -123,26 +139,24 @@ def main():
             """, unsafe_allow_html=True)
             
             if not picks:
-                st.warning("No picks available")
+                st.info("No picks available")
                 st.markdown("---")
                 continue
             
             cols = st.columns(min(len(picks), 3))
             for i, pick in enumerate(picks):
                 with cols[i % len(cols)]:
-                    conf = pick['confidence'].lower()
-                    card_class = f"ticker-card-{conf}" if conf in ['high', 'medium', 'low'] else "ticker-card"
+                    conf = pick.get('confidence', 'low').lower()
+                    if conf not in ['high', 'medium', 'low']:
+                        conf = 'low'
                     
                     st.markdown(f"""
-                    <div class="ticker-card {card_class}">
-                        <h3 style="margin:0; font-size:1.3rem;">{pick['ticker']}{' ⭐' if pick.get('is_core', False) else ''}</h3>
+                    <div class="ticker-card">
+                        <h3 style="margin:0; font-size:1.3rem;">{pick.get('ticker', 'N/A')}{' ⭐' if pick.get('is_core', False) else ''}</h3>
                         <div style="font-size:2rem; font-weight:700; margin:0.3rem 0;">
-                            {pick['expected_return']:.1f}%
+                            {pick.get('expected_return', 0):.1f}%
                         </div>
-                        <div class="confidence-{conf}">Confidence: {pick['confidence']}</div>
-                        <div style="font-size:0.7rem; color:#95a5a6; margin-top:0.3rem;">
-                            {'Core ETF' if pick.get('is_core', False) else 'Periphery ETF'}
-                        </div>
+                        <div class="confidence-{conf}">Confidence: {pick.get('confidence', 'Low')}</div>
                     </div>
                     """, unsafe_allow_html=True)
             
@@ -160,33 +174,13 @@ def main():
             # Metrics row
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.markdown(f"""
-                <div class="metric-box">
-                    <div class="metric-value">{phase.get('phase_type', 'stable')}</div>
-                    <div class="metric-label">Phase</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.metric("Phase", phase.get('phase_type', 'stable').upper())
             with col2:
-                st.markdown(f"""
-                <div class="metric-box">
-                    <div class="metric-value">{metrics.get('integrated_connectivity', 0):.3f}</div>
-                    <div class="metric-label">Connectivity</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.metric("Connectivity", f"{metrics.get('integrated_connectivity', 0):.3f}")
             with col3:
-                st.markdown(f"""
-                <div class="metric-box">
-                    <div class="metric-value">{metrics.get('entropy', 0):.3f}</div>
-                    <div class="metric-label">Entropy</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.metric("Entropy", f"{metrics.get('entropy', 0):.3f}")
             with col4:
-                st.markdown(f"""
-                <div class="metric-box">
-                    <div class="metric-value">{metrics.get('core_ratio', 0):.2f}</div>
-                    <div class="metric-label">Core Ratio</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.metric("Core Ratio", f"{metrics.get('core_ratio', 0):.2f}")
             
             # Phase interpretation
             phase_type = phase.get('phase_type', 'stable')
