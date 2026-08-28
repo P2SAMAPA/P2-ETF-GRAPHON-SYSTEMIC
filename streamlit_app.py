@@ -27,18 +27,43 @@ st.markdown("""
         padding: 1rem 0;
     }
     .ticker-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        background: #f8f9fa;
         border-radius: 10px;
         padding: 1.5rem;
         margin: 0.5rem 0;
-        border-left: 5px solid #667eea;
+        border-left: 4px solid #667eea;
     }
+    .ticker-card-high { border-left-color: #27ae60; }
+    .ticker-card-medium { border-left-color: #f39c12; }
+    .ticker-card-low { border-left-color: #e74c3c; }
     .confidence-high { color: #27ae60; font-weight: 600; }
     .confidence-medium { color: #f39c12; font-weight: 600; }
     .confidence-low { color: #e74c3c; font-weight: 600; }
-    .phase-warning { color: #e74c3c; font-weight: 700; }
-    .phase-stable { color: #27ae60; font-weight: 700; }
-    .phase-transition { color: #f39c12; font-weight: 700; }
+    .metric-box {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #2c3e50;
+    }
+    .metric-label {
+        font-size: 0.8rem;
+        color: #7f8c8d;
+    }
+    .phase-tag {
+        display: inline-block;
+        padding: 0.2rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .phase-stable { background: #27ae60; color: white; }
+    .phase-transition { background: #f39c12; color: white; }
+    .phase-breakdown { background: #e74c3c; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -50,17 +75,6 @@ def load_data():
         latest = sorted(json_files)[-1]
         with open(latest, 'r') as f:
             return json.load(f)
-    
-    try:
-        repo_id = "P2SAMAPA/p2-etf-graphon-systemic-results"
-        today = datetime.now().strftime("%Y-%m-%d")
-        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/graphon_results_{today}.json"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-    except:
-        pass
-    
     return None
 
 
@@ -90,31 +104,44 @@ def main():
         for universe, picks in top_picks.items():
             phase = phase_transitions.get(universe, {})
             phase_type = phase.get('phase_type', 'stable')
-            core_etfs = phase.get('core_etfs', [])
             best_win = best_windows.get(universe, {}).get('window', 252)
             
-            st.markdown(f"### {universe}")
-            st.markdown(f"**Best Window:** {best_win} days | **Phase:** {phase_type.upper()}")
+            # Phase tag
+            if phase_type == 'stable':
+                phase_class = 'phase-stable'
+                phase_label = 'Stable'
+            elif phase_type in ['connectivity_buildup', 'core_periphery_formation']:
+                phase_class = 'phase-transition'
+                phase_label = 'Transitioning'
+            else:
+                phase_class = 'phase-breakdown'
+                phase_label = 'Breaking Down'
             
-            if core_etfs:
-                st.caption(f"Core ETFs: {', '.join(core_etfs[:5])}")
+            st.markdown(f"""
+            ### {universe}
+            **Best Window:** {best_win} days | **Phase:** <span class="phase-tag {phase_class}">{phase_label}</span>
+            """, unsafe_allow_html=True)
+            
+            if not picks:
+                st.warning("No picks available")
+                st.markdown("---")
+                continue
             
             cols = st.columns(min(len(picks), 3))
             for i, pick in enumerate(picks):
                 with cols[i % len(cols)]:
                     conf = pick['confidence'].lower()
-                    color = "#27ae60" if conf == "high" else "#f39c12" if conf == "medium" else "#e74c3c"
-                    is_core = pick.get('is_core', False)
+                    card_class = f"ticker-card-{conf}" if conf in ['high', 'medium', 'low'] else "ticker-card"
                     
                     st.markdown(f"""
-                    <div class="ticker-card">
-                        <h3 style="margin:0;">{pick['ticker']}{' ⭐' if is_core else ''}</h3>
-                        <div style="font-size:2rem; font-weight:700; margin:0.5rem 0;">
+                    <div class="ticker-card {card_class}">
+                        <h3 style="margin:0; font-size:1.3rem;">{pick['ticker']}{' ⭐' if pick.get('is_core', False) else ''}</h3>
+                        <div style="font-size:2rem; font-weight:700; margin:0.3rem 0;">
                             {pick['expected_return']:.1f}%
                         </div>
-                        <div style="color:{color}; font-weight:600;">Confidence: {pick['confidence']}</div>
-                        <div style="font-size:0.7rem; color:#888; margin-top:0.3rem;">
-                            {'Core ETF' if is_core else ''}
+                        <div class="confidence-{conf}">Confidence: {pick['confidence']}</div>
+                        <div style="font-size:0.7rem; color:#95a5a6; margin-top:0.3rem;">
+                            {'Core ETF' if pick.get('is_core', False) else 'Periphery ETF'}
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -125,37 +152,64 @@ def main():
         st.subheader("Graphon Phase Analysis")
         
         for universe in top_picks.keys():
-            st.markdown(f"### {universe}")
-            
             phase = phase_transitions.get(universe, {})
             metrics = graphon_metrics.get(universe, {})
             
-            col1, col2, col3, col4 = st.columns(4)
+            st.markdown(f"### {universe}")
             
+            # Metrics row
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Phase Type", phase.get('phase_type', 'stable').upper())
+                st.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-value">{phase.get('phase_type', 'stable')}</div>
+                    <div class="metric-label">Phase</div>
+                </div>
+                """, unsafe_allow_html=True)
             with col2:
-                st.metric("Integrated Connectivity", f"{metrics.get('integrated_connectivity', 0):.3f}")
+                st.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-value">{metrics.get('integrated_connectivity', 0):.3f}</div>
+                    <div class="metric-label">Connectivity</div>
+                </div>
+                """, unsafe_allow_html=True)
             with col3:
-                st.metric("Entropy", f"{metrics.get('entropy', 0):.3f}")
+                st.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-value">{metrics.get('entropy', 0):.3f}</div>
+                    <div class="metric-label">Entropy</div>
+                </div>
+                """, unsafe_allow_html=True)
             with col4:
-                st.metric("Core Ratio", f"{metrics.get('core_ratio', 0):.2f}")
+                st.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-value">{metrics.get('core_ratio', 0):.2f}</div>
+                    <div class="metric-label">Core Ratio</div>
+                </div>
+                """, unsafe_allow_html=True)
             
             # Phase interpretation
             phase_type = phase.get('phase_type', 'stable')
-            if phase_type == 'connectivity_breakdown':
-                st.warning("⚠️ **Connectivity Breakdown Detected** - Network is fragmenting. Increased systemic risk.")
-            elif phase_type == 'core_periphery_formation':
-                st.warning("⚠️ **Core-Periphery Formation** - Network concentrating. Watch for crowded trades.")
-            elif phase_type == 'connectivity_buildup':
-                st.info("🔄 **Connectivity Buildup** - Network becoming more connected. Potential for contagion.")
+            transition_detected = phase.get('transition_detected', False)
+            
+            if transition_detected:
+                if phase_type == 'connectivity_breakdown':
+                    st.warning("⚠️ **Connectivity Breakdown** - Network fragmenting. Systemic risk increasing.")
+                elif phase_type == 'core_periphery_formation':
+                    st.warning("⚠️ **Core-Periphery Formation** - Network concentrating. Watch for crowded trades.")
+                elif phase_type == 'connectivity_buildup':
+                    st.info("🔄 **Connectivity Buildup** - Network becoming more connected. Potential contagion risk.")
+                else:
+                    st.info("🔄 **Transition Detected** - Network phase shifting.")
             else:
                 st.success("✅ **Stable** - No significant phase transition detected.")
             
             # Core ETFs
             core_etfs = phase.get('core_etfs', [])
             if core_etfs:
-                st.markdown(f"**Core ETFs (80th percentile connectivity):** {', '.join(core_etfs[:10])}")
+                st.markdown(f"**Core ETFs (80th percentile):** {', '.join(core_etfs[:8])}")
+            else:
+                st.caption("No core ETFs identified")
             
             st.markdown("---")
 
